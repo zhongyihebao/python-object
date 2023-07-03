@@ -1,0 +1,121 @@
+# 导入一些库
+import os
+import joblib
+import numpy as np
+import pandas as pd
+from PIL import Image
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.svm import SVC
+from sklearn.decomposition import PCA
+from sklearn.metrics import classification_report, confusion_matrix
+import seaborn as sns
+
+# 从文件夹中读取20000张tif灰度图像，并将它们转换为numpy数组。
+image_folder = 'images'
+image_files = [os.path.join(image_folder, f'sample_{i:05d}.tif') for i in range(20000)]
+
+images = []
+for image_file in image_files:
+    img = Image.open(image_file)
+    img_array = np.array(img).flatten()
+    images.append(img_array)
+
+images = np.array(images)
+
+# 从一个名为labels.txt的文本文件中读取对应的标签，并将它们转换为numpy数组。标签是一个长度为20000的一维数组，每个元素是一个0到9之间的整数，表示图像中数字的真实值。
+labels_file = 'labels.txt'
+with open(labels_file, 'r') as f:
+    labels = [int(label) for label in f.read().split(',')]
+
+labels = np.array(labels)
+
+# 使用numpy和pandas检查图像和标签中是否有缺失数据，并打印出缺失数据的数量。如果有缺失数据，则使用均值或众数填充。
+missing_images = np.isnan(images).any(axis=1)
+missing_labels = np.isnan(labels)
+
+if missing_images.any() or missing_labels.any():
+    print(f'存在缺失数据: 图像 - {missing_images.sum()}, 标签 - {missing_labels.sum()}')
+    # 使用均值填充图像中的缺失值
+    images_mean = np.nanmean(images, axis=0)
+    images[missing_images] = images_mean
+    # 使用众数填充标签中的缺失值
+    labels_mode = pd.Series(labels).mode()[0]
+    labels[missing_labels] = labels_mode
+else:
+    print('不存在缺失数据')
+
+# 检查图像中是否有异常值，并打印出异常值的数量。如果有异常值，则使用基于像素均值和标准差的离群点检测方法找出并移除。
+image_means = images.mean(axis=1)
+image_stds = images.std(axis=1)
+
+mean_threshold = 3 * image_means.std()
+std_threshold = 3 * image_stds.std()
+
+outliers = np.where((np.abs(image_means - image_means.mean()) > mean_threshold) | (np.abs(image_stds - image_stds.mean()) > std_threshold))[0]
+
+print(f'异常数据数量: {len(outliers)}')
+
+# 移除异常数据
+images = np.delete(images, outliers, axis=0)
+labels = np.delete(labels, outliers)
+
+# 对预处理后的图像数据进行规范化与标准化操作，分别采用了Z-score标准化和归一化两种方式进行处理，并对比最终对模型性能的影响。
+# Z-score标准化
+scaler1 = StandardScaler()
+images_standardized1 = scaler1.fit_transform(images)
+
+# 归一化
+scaler2 = MinMaxScaler()
+images_standardized2 = scaler2.fit_transform(images)
+
+# 对标准化后的图像数据进行PCA降维，要求保留95%的方差，并对比降维前后对模型性能的影响。
+pca = PCA(n_components=0.95)
+images_pca1 = pca.fit_transform(images_standardized1)
+images_pca2 = pca.fit_transform(images_standardized2)
+
+#利用标准化后（降维前后）的图像数据训练模型，要求分别采用KNN和SVM两种分类器进行模型训练，并用合适的方式分析展示两种模型在不同数据集上（Z-score标准化、归一化、降维前、降维后）的性能差异。使用sklearn库提供的分类器模型，并设置合适的参数和超参数。使用sklearn库提供的模型评价指标和方法，要求打印出每种模型在每种数据集上（训练集和测试集）的分类报告（包含准确率、精确率、召回率、F1分数等）和混淆矩阵。
+#K-Nearest Neighbors
+knn = KNeighborsClassifier(n_neighbors=5)
+
+# Support Vector Machines最最最难的支持向量机
+svm = SVC(kernel='rbf', C=1, gamma='scale')
+
+# 拆分数据集
+X_train1, X_test1, y_train1, y_test1 = train_test_split(images_standardized1, labels, test_size=0.2, random_state=42)
+X_train2, X_test2, y_train2, y_test2 = train_test_split(images_standardized2, labels, test_size=0.2, random_state=42)
+X_train3, X_test3, y_train3, y_test3 = train_test_split(images_pca1, labels, test_size=0.2, random_state=42)
+X_train4, X_test4, y_train4, y_test4 = train_test_split(images_pca2, labels, test_size=0.2, random_state=42)
+
+# 训练和评估模型
+models = [(knn, 'K-Nearest Neighbors'), (svm, 'Support Vector Machines')]
+datasets = [((X_train1, X_test1, y_train1, y_test1), 'Z-score标准化'), ((X_train2, X_test2, y_train2, y_test2), '归一化'), ((X_train3, X_test3, y_train3, y_test3), 'Z-score标准化+PCA'), ((X_train4, X_test4, y_train4, y_test4), '归一化+PCA')]
+
+for model, model_name in models:
+    for (X_train, X_test, y_train, y_test), dataset_name in datasets:
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+# 合理拆分数据集，要求采用5折交叉验证的方式评估模型的性能，并得出对应的结论。使用sklearn库提供的交叉验证方法，打印出每种模型在每种数据集上的5折交叉验证平均准确率。
+for model, model_name in models:
+    for (X_train, X_test, y_train, y_test), dataset_name in datasets:
+        scores = cross_val_score(model, np.concatenate((X_train, X_test)), np.concatenate((y_train, y_test)), cv=5)
+        print(f'{model_name} 在 {dataset_name} 数据集上的5折交叉验证平均准确率: {scores.mean()}')
+        print('-' * 50)
+# 采用性能最好的模型进行测试，将学号拍照后手动处理为单个字符图像，并保存为 'digit_0-9.tif'。在读取处理后的图像之后，将它们转换为numpy数组。然后使用之前的标准化器和PCA对图像进行预处理和标准化。最后使用之前的模型对图像进行预测，并打印出预测的学号。
+# 读取并处理图像
+digits = []
+for i in range(len(str(3210421131))):  # 我的学号是3210421117
+    img = Image.open(f'digit_{i}.tif').convert('L')  # 转换为灰度图像
+    img_array = np.array(img).flatten()
+    digits.append(img_array)
+
+digits = np.array(digits)
+
+# 预处理和标准化
+digits_standardized = scaler1.transform(digits)
+digits_pca = pca.transform(digits_standardized)
+
+# 使用模型预测
+predicted_digits = knn.predict(digits_pca)
+print(f'预测的学号: {"".join(map(str, predicted_digits))}')
